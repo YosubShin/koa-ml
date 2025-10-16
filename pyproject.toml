@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "koa-ml"
+version = "0.1.0"
+description = "Utilities for interacting with the KOA HPC cluster from a local workstation."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+authors = [
+  {name = "Michael Buriek"}
+]
+dependencies = [
+  "PyYAML>=6.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black",
+  "ruff",
+  "pytest>=7.0",
+  "pytest-mock>=3.10",
+]
+
+[project.scripts]
+koa-ml = "koa_ml.__main__:main"
+koa_ml = "koa_ml.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

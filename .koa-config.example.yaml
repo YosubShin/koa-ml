@@ -1,0 +1,8 @@
+# Minimal KOA configuration file for koa-ml utilities.
+user: "<your_koa_netid>"
+host: koa.its.hawaii.edu
+# Optional: uncomment if you want to force a specific SSH key.
+# identity_file: ~/.ssh/id_rsa
+remote_workdir: /home/<your_koa_netid>/koa-ml
+# Optional: ProxyCommand string if you reach KOA via a jump host.
+# proxy_command: ssh -W %h:%p jumphost.example.edu
