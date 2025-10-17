@@ -46,3 +46,22 @@ build/
 # User configuration file (use .koa-config.example.yaml as template)
 .koa-config.yaml
 config.yaml
+
+# ML outputs and artifacts
+output/
+logs/
+eval_results/
+wandb/
+*.out
+*.log
+
+# Model checkpoints (large files)
+*.safetensors
+*.bin
+*.pth
+*.pt
+checkpoint-*/
+
+# HuggingFace cache
+.cache/
+~/.cache/huggingface/
