@@ -26,6 +26,11 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 Image.MAX_IMAGE_PIXELS = None
 
+# Disable HF Transfer fallback (not reliable on KOA)
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+os.environ.setdefault("HF_HUB_DISABLE_HF_TRANSFER", "1")
+
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 @dataclass
 class EvalConfig:

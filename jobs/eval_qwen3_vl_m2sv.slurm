@@ -38,6 +38,9 @@ if command -v module >/dev/null 2>&1; then
 fi
 
 # Activate virtual environment
+export HF_HUB_ENABLE_HF_TRANSFER=0
+export HF_HUB_DISABLE_HF_TRANSFER=1
+export HF_HUB_DISABLE_TELEMETRY=1
 VENV_PATH="${KOA_ML_VENV:-$HOME/koa-ml/.venv}"
 if [ ! -d "$VENV_PATH" ]; then
   echo "Virtualenv not found at $VENV_PATH" >&2

@@ -21,6 +21,7 @@ VENV_DIR="${VENV_DIR:-${PROJECT_ROOT}/.venv}"
 PYTHON_MODULE="${PYTHON_MODULE:-lang/Python/3.11.5-GCCcore-13.2.0}"
 CUDA_MODULE="${CUDA_MODULE:-system/CUDA/12.2.0}"
 TORCH_VERSION="${TORCH_VERSION:-2.5.1}"
+TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.20.1}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 INSTALL_FLASH_ATTN="${INSTALL_FLASH_ATTN:-1}"
 
@@ -124,6 +125,9 @@ else
   log "Torch already present; skipping torch install"
 fi
 
+log "Ensuring torchvision ${TORCHVISION_VERSION}"
+python -m pip install "torchvision==${TORCHVISION_VERSION}" --index-url "${TORCH_INDEX_URL}"
+
 log "Installing koa-ml and ML extras"
 EXTRA_PKGS=(
   "transformers>=4.40.0"
@@ -136,6 +140,7 @@ EXTRA_PKGS=(
   "pandas>=2.0.0"
   "pillow>=10.0.0"
   "tqdm>=4.65.0"
+  "torchvision>=${TORCHVISION_VERSION}"
 )
 
 if [[ "${INSTALL_FLASH_ATTN}" == "1" ]]; then
