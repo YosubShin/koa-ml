@@ -11,10 +11,9 @@ pip install -e ".[ml]"
 ```
 
 > Setting up on KOA? Start an interactive session (`srun -p gpu-sandbox --gres=gpu:1 --mem=8G -t 0-00:30 --pty /bin/bash`), then run
-> `source scripts/setup_koa_env.sh` inside the repo. Override modules if needed (e.g.
-> `PYTHON_MODULE=lang/Python/3.10.8-GCCcore-12.2.0 CUDA_MODULE=cuda/12.4 source scripts/setup_koa_env.sh`).
-> If `flash-attn` fails to compile, the script automatically retries without it.
-> The SLURM jobs expect the venv at `$HOME/koa-ml/.venv` (set `KOA_ML_VENV` to override), load `lang/Python/3.11.5-GCCcore-13.2.0` by default (`KOA_PYTHON_MODULE`), and execute from `$HOME/koa-ml` unless `KOA_ML_WORKDIR` is provided.
+> `source scripts/setup_koa_env.sh` inside the repo. The script tries the standard KOA Python module (3.11.5) with fallbacks, attempts to load `system/CUDA/12.2.0`, and will automatically retry `pip install` without flash-attn if nvcc isn’t available. Override modules if needed (e.g.
+> `PYTHON_MODULE=lang/Python/3.10.8-GCCcore-12.2.0 CUDA_MODULE= source scripts/setup_koa_env.sh`).
+> The SLURM jobs expect the venv at `$HOME/koa-ml/.venv` (set `KOA_ML_VENV` to override), load the selected Python module (`KOA_PYTHON_MODULE`), and execute from `$HOME/koa-ml` unless `KOA_ML_WORKDIR` is provided.
 
 This installs:
 - PyTorch, Transformers, Accelerate (core ML)

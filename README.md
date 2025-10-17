@@ -43,7 +43,7 @@ source scripts/setup_koa_env.sh              # defaults to Python 3.11.5 + cuda/
 #   CUDA_MODULE=cuda/12.4 source scripts/setup_koa_env.sh
 ```
 
-The script loads the default KOA Python module, recreates `.venv`, installs PyTorch (CUDA 12.1 build), and installs the project with `.[ml]` extras.
+The script automatically loads a KOA Python module (3.11 by default with fallbacks), attempts to load `system/CUDA/12.2.0`, recreates `.venv`, installs PyTorch (CUDA 12.x build), and installs the project with `.[ml]` extras.
 
 If `flash-attn` fails to build (missing `nvcc`/CUDA headers), the script retries automatically without that dependency. To skip it entirely, run `INSTALL_FLASH_ATTN=0 source scripts/setup_koa_env.sh`.
 
@@ -100,6 +100,7 @@ After installation you can run the CLI as `koa-ml <command>` (the `koa_ml` alias
 - `koa-ml submit jobs/example_job.slurm --partition gpu --gpus 1` — copy the job script to KOA, submit it with `sbatch`, and print the job id
 - `koa-ml jobs` — list your active jobs using `squeue`
 - `koa-ml cancel <job_id>` — cancel an active job (`scancel`)
+- `koa-ml refresh` — rsync the current directory to the remote workdir (defaults to `~/koa-ml`)
 
 Each command accepts `--config` if you want to point at a custom configuration path.
 
@@ -131,6 +132,9 @@ koa-ml submit jobs/eval_mmlu.slurm
 python eval/evaluate.py \
   --model ./output/llama8b_lora \
   --tasks mmlu,gsm8k,hellaswag
+
+# Multimodal M2SV evaluation (Qwen3-VL)
+koa-ml submit jobs/eval_qwen3_vl_m2sv.slurm
 ```
 
 ## Testing

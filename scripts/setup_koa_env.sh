@@ -12,12 +12,14 @@
 #   4. Install an appropriate PyTorch wheel (defaults to CUDA 12.1 build)
 #   5. Install koa-ml in editable mode with the [ml] extras
 
+OLD_SET_OPTIONS=$(set +o)
+trap 'eval "${OLD_SET_OPTIONS}"; unset OLD_SET_OPTIONS' EXIT
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${VENV_DIR:-${PROJECT_ROOT}/.venv}"
 PYTHON_MODULE="${PYTHON_MODULE:-lang/Python/3.11.5-GCCcore-13.2.0}"
-CUDA_MODULE="${CUDA_MODULE:-cuda/12.1}"
+CUDA_MODULE="${CUDA_MODULE:-system/CUDA/12.2.0}"
 TORCH_VERSION="${TORCH_VERSION:-2.5.1}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 INSTALL_FLASH_ATTN="${INSTALL_FLASH_ATTN:-1}"
@@ -35,10 +37,28 @@ if ! command -v module >/dev/null 2>&1; then
   die "Lmod 'module' command not found. Run this script on KOA where modules are available."
 fi
 
-log "Loading Python module: ${PYTHON_MODULE}"
 module purge >/dev/null 2>&1 || true
-if ! module load "${PYTHON_MODULE}" >/dev/null 2>&1; then
-  die "Failed to load module '${PYTHON_MODULE}'. Check module availability with 'module avail python'."
+
+candidate_modules=(
+  "${PYTHON_MODULE}"
+  "lang/Python/3.13.1-GCCcore-14.2.0"
+  "lang/Python/3.12.3-GCCcore-13.2.0"
+  "lang/Python/3.10.8-GCCcore-12.2.0"
+)
+
+PYTHON_MODULE_LOADED=""
+for candidate in "${candidate_modules[@]}"; do
+  if module avail "${candidate}" >/dev/null 2>&1; then
+    if module load "${candidate}" >/dev/null 2>&1; then
+      PYTHON_MODULE_LOADED="${candidate}"
+      log "Loaded Python module: ${candidate}"
+      break
+    fi
+  fi
+done
+
+if [[ -z "${PYTHON_MODULE_LOADED}" ]]; then
+  die "Failed to load a Python module. Tried: ${candidate_modules[*]}"
 fi
 
 if [[ -n "${CUDA_MODULE}" ]]; then
@@ -46,6 +66,11 @@ if [[ -n "${CUDA_MODULE}" ]]; then
     log "Loading CUDA module: ${CUDA_MODULE}"
     if ! module load "${CUDA_MODULE}" >/dev/null 2>&1; then
       log "WARNING: Unable to load CUDA module '${CUDA_MODULE}'. flash-attn build may fail (nvcc required)."
+    else
+      if [[ -z "${CUDA_HOME:-}" && -n "${EBROOTCUDA:-}" ]]; then
+        export CUDA_HOME="${EBROOTCUDA}"
+        log "Set CUDA_HOME=${CUDA_HOME}"
+      fi
     fi
   else
     log "WARNING: CUDA module '${CUDA_MODULE}' not found in module tree; skipping."
@@ -59,7 +84,7 @@ if [[ -n "${EBROOTPYTHON:-}" ]]; then
   elif [[ -x "${EBROOTPYTHON}/bin/python" ]]; then
     PYTHON_BIN="${EBROOTPYTHON}/bin/python"
   else
-    log "Module '${PYTHON_MODULE}' reports EBROOTPYTHON=${EBROOTPYTHON}, but no python executable was found there."
+    log "Module '${PYTHON_MODULE_LOADED}' reports EBROOTPYTHON=${EBROOTPYTHON}, but no python executable was found there."
   fi
 fi
 
@@ -72,7 +97,7 @@ if [[ -z "${PYTHON_BIN}" ]]; then
 fi
 
 if [[ -z "${PYTHON_BIN}" ]]; then
-  die "Unable to locate a python interpreter after loading '${PYTHON_MODULE}'. On KOA you may need to run this script inside an interactive 'srun --pty' session so the module binaries are available."
+  die "Unable to locate a python interpreter after loading '${PYTHON_MODULE_LOADED}'. On KOA you may need to run this script inside an interactive 'srun --pty' session so the module binaries are available."
 fi
 
 log "Using python: ${PYTHON_BIN} ($("${PYTHON_BIN}" --version 2>&1))"
@@ -100,31 +125,34 @@ else
 fi
 
 log "Installing koa-ml and ML extras"
+EXTRA_PKGS=(
+  "transformers>=4.40.0"
+  "accelerate>=0.28.0"
+  "peft>=0.11.1"
+  "trl>=0.9.6"
+  "datasets>=2.18.0"
+  "lm-eval[wandb]>=0.4.2"
+  "bitsandbytes>=0.42.0"
+  "pandas>=2.0.0"
+  "pillow>=10.0.0"
+  "tqdm>=4.65.0"
+)
+
 if [[ "${INSTALL_FLASH_ATTN}" == "1" ]]; then
   if ! python -m pip install -e ".[ml]"; then
     log "WARNING: 'pip install -e \".[ml]\"' failed (likely flash-attn build). Retrying without flash-attn."
     python -m pip install -e .
-    python -m pip install \
-      "transformers>=4.40.0" \
-      "accelerate>=0.28.0" \
-      "peft>=0.11.1" \
-      "trl>=0.9.6" \
-      "datasets>=2.18.0" \
-      "lm-eval[wandb]>=0.4.2" \
-      "bitsandbytes>=0.42.0"
+    python -m pip install "${EXTRA_PKGS[@]}"
   fi
 else
   log "INSTALL_FLASH_ATTN=0; installing ML stack without flash-attn"
   python -m pip install -e .
-  python -m pip install \
-    "transformers>=4.40.0" \
-    "accelerate>=0.28.0" \
-    "peft>=0.11.1" \
-    "trl>=0.9.6" \
-    "datasets>=2.18.0" \
-    "lm-eval[wandb]>=0.4.2" \
-    "bitsandbytes>=0.42.0"
+  python -m pip install "${EXTRA_PKGS[@]}"
 fi
 
 log "Environment ready."
 log "To use it in future sessions: source '${VENV_DIR}/bin/activate'"
+
+trap - EXIT
+eval "${OLD_SET_OPTIONS}"
+unset OLD_SET_OPTIONS

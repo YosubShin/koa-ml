@@ -35,6 +35,9 @@ train = [
   "bitsandbytes>=0.42.0; platform_system == \"Linux\"",
   "flash-attn>=2.5.6; platform_system == \"Linux\"",
   "wandb>=0.16.0",
+  "pandas>=2.0.0",
+  "pillow>=10.0.0",
+  "tqdm>=4.65.0",
 ]
 
 # Evaluation dependencies
@@ -44,6 +47,9 @@ eval = [
   "accelerate>=0.28.0",
   "lm-eval[wandb]>=0.4.2",
   "datasets>=2.18.0",
+  "pandas>=2.0.0",
+  "pillow>=10.0.0",
+  "tqdm>=4.65.0",
 ]
 
 # All ML dependencies (train + eval)
@@ -58,6 +64,9 @@ ml = [
   "flash-attn>=2.5.6; platform_system == \"Linux\"",
   "lm-eval[wandb]>=0.4.2",
   "wandb>=0.16.0",
+  "pandas>=2.0.0",
+  "pillow>=10.0.0",
+  "tqdm>=4.65.0",
 ]
 
 [project.scripts]

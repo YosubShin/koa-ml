@@ -4,7 +4,7 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Iterable, List, Union
+from typing import Iterable, List, Optional, Sequence, Union
 
 from .config import Config
 
@@ -30,6 +30,15 @@ def _scp_base_args(config: Config) -> List[str]:
     if config.proxy_command:
         args.extend(["-o", f"ProxyCommand={config.proxy_command}"])
     return args
+
+
+def _rsync_ssh_command(config: Config) -> str:
+    ssh_parts = ["ssh", "-o", "LogLevel=ERROR"]
+    if config.identity_file:
+        ssh_parts.extend(["-i", str(config.identity_file)])
+    if config.proxy_command:
+        ssh_parts.extend(["-o", f"ProxyCommand={config.proxy_command}"])
+    return " ".join(shlex.quote(part) for part in ssh_parts)
 
 
 def run_ssh(
@@ -111,5 +120,56 @@ def copy_from_remote(
     if result.returncode != 0:
         raise SSHError(
             f"SCP download failed ({result.returncode}): {' '.join(scp_command)}\n"
+            f"stderr: {result.stderr}"
+        )
+
+
+def sync_directory_to_remote(
+    config: Config,
+    local_dir: Path,
+    remote_dir: Path,
+    *,
+    excludes: Optional[Sequence[str]] = None,
+) -> None:
+    """
+    Synchronize a local directory to the remote workdir via rsync.
+    """
+    local_dir = local_dir.expanduser().resolve()
+    if not local_dir.is_dir():
+        raise FileNotFoundError(f"Local directory does not exist: {local_dir}")
+
+    excludes = excludes or []
+
+    # Ensure the remote directory exists
+    run_ssh(config, ["mkdir", "-p", str(remote_dir)])
+
+    ssh_command = _rsync_ssh_command(config)
+
+    rsync_command: list[str] = [
+        "rsync",
+        "-av",
+        "--delete",
+    ]
+    for pattern in excludes:
+        rsync_command.extend(["--exclude", pattern])
+
+    rsync_command.extend(
+        [
+            "-e",
+            ssh_command,
+            f"{str(local_dir)}/",
+            f"{config.login}:{remote_dir}",
+        ]
+    )
+
+    result = subprocess.run(
+        rsync_command,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise SSHError(
+            f"rsync failed ({result.returncode}): {' '.join(rsync_command)}\n"
             f"stderr: {result.stderr}"
         )

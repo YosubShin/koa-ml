@@ -7,7 +7,7 @@ from typing import Optional
 
 from .config import Config, load_config
 from .slurm import cancel_job, list_jobs, run_health_checks, submit_job
-from .ssh import SSHError
+from .ssh import SSHError, sync_directory_to_remote
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -64,6 +64,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Additional raw sbatch arguments. Repeat for multiple flags.",
     )
 
+    refresh_parser = subparsers.add_parser(
+        "refresh", help="Sync the current directory to the remote KOA workdir."
+    )
+    _add_common_arguments(refresh_parser)
+    refresh_parser.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help="Local directory to sync (defaults to current working directory).",
+    )
+    refresh_parser.add_argument(
+        "--exclude",
+        action="append",
+        default=None,
+        help="Exclude pattern for rsync (repeatable).",
+    )
+
     return parser
 
 
@@ -115,6 +132,21 @@ def _check(_: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def _refresh(args: argparse.Namespace, config: Config) -> int:
+    local_path = Path(args.path).expanduser().resolve() if args.path else Path.cwd()
+    excludes = args.exclude or [".git", ".venv", "__pycache__", "*.pyc", "*.log"]
+    sync_directory_to_remote(
+        config,
+        local_path,
+        config.remote_workdir,
+        excludes=excludes,
+    )
+    print(
+        f"Synced {local_path} -> {config.login}:{config.remote_workdir}"
+    )
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -132,6 +164,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             return _jobs(args, config)
         if args.command == "check":
             return _check(args, config)
+        if args.command == "refresh":
+            return _refresh(args, config)
     except (SSHError, FileNotFoundError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

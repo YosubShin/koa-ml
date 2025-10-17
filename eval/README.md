@@ -76,6 +76,14 @@ All benchmark configs are in `eval/configs/benchmarks/`:
 - **Time**: ~5 minutes
 - **Use case**: Pipeline validation
 
+### Vision-Language
+- **Qwen3-VL on M2SV**
+  - **Config**: [eval/configs/qwen3_vl_m2sv.yaml](configs/qwen3_vl_m2sv.yaml)
+  - **Job**: [jobs/eval_qwen3_vl_m2sv.slurm](../jobs/eval_qwen3_vl_m2sv.slurm)
+  - **What it tests**: Scene + map comprehension from the M2SV dataset
+  - **Time**: ~4 hours (4B model, batch size 1)
+  - **Output**: Predictions & summary under `eval_results/qwen3_vl_m2sv/`
+
 ## Config Structure
 
 Each benchmark config has 3 sections:

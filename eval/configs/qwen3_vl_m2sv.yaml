@@ -1,0 +1,19 @@
+# Evaluation config for Qwen3-VL on the M2SV dataset
+
+model:
+  model_name: "Qwen/Qwen3-VL-4B-Instruct"
+  dtype: "float16"
+  device_map: "auto"
+
+dataset:
+  name: "yosubshin/m2sv"
+  split: "train"
+
+generation:
+  max_new_tokens: 128
+  temperature: 0.1
+  limit:
+
+output:
+  dir: "./eval_results/qwen3_vl_m2sv"
+  save_predictions: true
