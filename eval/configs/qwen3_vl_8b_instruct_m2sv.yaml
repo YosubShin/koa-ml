@@ -15,5 +15,5 @@ generation:
   limit:
 
 output:
-  dir: "./eval_results/qwen3_vl_8b_instruct_m2sv"
+  dir: "./eval_results/qwen3_vl_8b_instruct_m2sv_20251017_v2"
   save_predictions: true
