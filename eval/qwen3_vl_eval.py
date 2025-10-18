@@ -22,7 +22,7 @@ import yaml
 from datasets import Dataset, load_dataset
 from PIL import Image
 from tqdm.auto import tqdm
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers import AutoProcessor, AutoModelForVision2Seq
 import re
 
 Image.MAX_IMAGE_PIXELS = None
@@ -215,9 +215,9 @@ def evaluate(cfg: EvalConfig) -> Dict[str, Any]:
 
     dtype = to_torch_dtype(cfg.dtype)
     print("\n[1/4] Loading Qwen3-VL model...")
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
+    model = AutoModelForVision2Seq.from_pretrained(
         cfg.model_name,
-        dtype=dtype,
+        torch_dtype=dtype,
         device_map=cfg.device_map,
     )
     processor = AutoProcessor.from_pretrained(cfg.model_name)
