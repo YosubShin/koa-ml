@@ -10,7 +10,7 @@ dataset:
   split: "validation"
 
 generation:
-  max_new_tokens: 1024
+  max_new_tokens: 4096
   temperature: 0.1
   limit:
 
