@@ -1,7 +1,7 @@
 # Evaluation config for Qwen3-VL on the M2SV dataset
 
 model:
-  model_name: "Qwen/Qwen3-VL-30B-A3B-Thinking"
+  model_name: "Qwen/Qwen3-VL-30B-A3B-Instruct"
   dtype: "float16"
   device_map: "auto"
 
@@ -15,5 +15,5 @@ generation:
   limit:
 
 output:
-  dir: "./eval_results/qwen3_vl_30b_a3b_thinking_m2sv_20251017_v2"
+  dir: "./eval_results/qwen3_vl_30b_a3b_instruct_m2sv_20251017_v2"
   save_predictions: true
