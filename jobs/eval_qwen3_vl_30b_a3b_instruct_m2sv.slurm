@@ -68,7 +68,7 @@ scripts/run_vllm_server.sh --model "${MODEL}" --port "${PORT}" --tp ${VLLM_TP:-1
 VLLM_PID=$!
 
 echo "Waiting for vLLM to become ready on port ${PORT}..."
-RETRIES=150
+RETRIES=300
 until curl -sSf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; do
   sleep 2
   RETRIES=$((RETRIES-1))
