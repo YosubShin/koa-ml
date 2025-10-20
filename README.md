@@ -16,6 +16,22 @@ Utilities for managing KOA HPC GPU jobs and fine-tuning/evaluating language mode
 
 ### 1. Setup KOA Connection
 
+In order to avoid getting prompted with MFA authorization every time, add this to `~/.ssh/config`.
+```
+Host koa koa.its.hawaii.edu
+  HostName koa.its.hawaii.edu
+  User <user_id>
+  IdentitiesOnly yes
+  IdentityFile ~/.ssh/<ssh_key_path>
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%C
+  ControlPersist 1h
+  ServerAliveInterval 60
+  ServerAliveCountMax 3
+  TCPKeepAlive yes
+  StrictHostKeyChecking accept-new
+```
+
 ```bash
 # Create Python environment
 python3 -m venv .venv
