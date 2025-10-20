@@ -17,3 +17,13 @@ generation:
 output:
   dir: "./eval_results/qwen3_vl_m2sv"
   save_predictions: true
+
+inference:
+  backend: vllm
+  vllm:
+    api_base: "http://127.0.0.1:8000"
+    api_key: "EMPTY"
+    model: "Qwen/Qwen3-VL-4B-Instruct"
+    max_concurrency: 8
+    request_timeout_s: 120
+    max_retries: 3

@@ -11,6 +11,7 @@
 #   3. Upgrade pip tooling
 #   4. Install an appropriate PyTorch wheel (defaults to CUDA 12.1 build)
 #   5. Install koa-ml in editable mode with the [ml] extras
+#   6. Install vLLM and helpers
 
 OLD_SET_OPTIONS=$(set +o)
 trap 'eval "${OLD_SET_OPTIONS}"; unset OLD_SET_OPTIONS' EXIT
@@ -154,6 +155,16 @@ else
   python -m pip install -e .
   python -m pip install "${EXTRA_PKGS[@]}"
 fi
+
+log "Installing vLLM (server)"
+# vLLM wheels are built for modern CUDA; ensure CUDA module is loaded
+if ! python -m pip install "vllm>=0.5.0"; then
+  log "WARNING: Failed to install vLLM from wheels. You may need a compatible CUDA toolchain or to try a different node."
+fi
+# Provide OpenAI-compatible client if desired by users
+python -m pip install "openai>=1.40.0" || true
+log "vLLM installation step completed."
+log "You can launch a server with: scripts/run_vllm_server.sh --model <hf_repo_or_path>"
 
 log "Environment ready."
 log "To use it in future sessions: source '${VENV_DIR}/bin/activate'"

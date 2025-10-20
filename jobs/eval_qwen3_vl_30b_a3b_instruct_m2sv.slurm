@@ -59,9 +59,36 @@ which python
 python --version
 echo ""
 
-echo "==== Starting Evaluation ===="
+echo "==== Starting vLLM server (background) ===="
+PORT=${VLLM_PORT:-8000}
+MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
+scripts/run_vllm_server.sh --model "${MODEL}" --port "${PORT}" --tp ${VLLM_TP:-1} --gpu-mem-util ${VLLM_GPU_MEM_UTIL:-0.92} &
+VLLM_PID=$!
+
+echo "Waiting for vLLM to become ready on port ${PORT}..."
+RETRIES=60
+until curl -sSf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; do
+  sleep 2
+  RETRIES=$((RETRIES-1))
+  if [ ${RETRIES} -le 0 ]; then
+    echo "vLLM did not become ready in time." >&2
+    kill ${VLLM_PID} || true
+    exit 1
+  fi
+done
+
+export KOA_EVAL_BACKEND=vllm
+export VLLM_API_BASE="http://127.0.0.1:${PORT}"
+export VLLM_MODEL="${MODEL}"
+
+echo "==== Starting Evaluation (vLLM) ===="
 python eval/qwen3_vl_eval.py \
-  --config eval/configs/qwen3_vl_30b_a3b_instruct_m2sv.yaml
+  --config eval/configs/qwen3_vl_30b_a3b_instruct_m2sv.yaml || STATUS=$?
+
+echo "Stopping vLLM server (PID ${VLLM_PID})..."
+kill ${VLLM_PID} || true
+wait ${VLLM_PID} || true
+exit ${STATUS:-0}
 
 echo ""
 echo "======================================"

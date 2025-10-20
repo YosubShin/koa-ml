@@ -15,6 +15,10 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import asyncio
+import base64
+import io
+import time
 
 import pandas as pd
 import torch
@@ -45,6 +49,15 @@ class EvalConfig:
     limit: Optional[int] = None
     output_dir: str = "./eval_results/qwen3_vl_m2sv"
     save_predictions: bool = True
+    # Inference backend
+    backend: str = "hf"  # "hf" | "vllm"
+    # vLLM settings (OpenAI-compatible API)
+    vllm_api_base: Optional[str] = None
+    vllm_api_key: Optional[str] = None
+    vllm_model: Optional[str] = None  # override model name for server if needed
+    vllm_max_concurrency: int = 8
+    vllm_request_timeout_s: float = 120.0
+    vllm_max_retries: int = 3
 
 
 def load_config(path: str) -> EvalConfig:
@@ -55,6 +68,9 @@ def load_config(path: str) -> EvalConfig:
     dataset_cfg = raw.get("dataset", {})
     generation_cfg = raw.get("generation", {})
     output_cfg = raw.get("output", {})
+
+    inference_cfg = raw.get("inference", {}) or {}
+    vllm_cfg = inference_cfg.get("vllm", {}) or {}
 
     cfg = EvalConfig(
         model_name=model_cfg["model_name"],
@@ -67,6 +83,13 @@ def load_config(path: str) -> EvalConfig:
         limit=generation_cfg.get("limit"),
         output_dir=output_cfg.get("dir", "./eval_results/qwen3_vl_m2sv"),
         save_predictions=output_cfg.get("save_predictions", True),
+        backend=(inference_cfg.get("backend") or "hf").lower(),
+        vllm_api_base=vllm_cfg.get("api_base"),
+        vllm_api_key=vllm_cfg.get("api_key"),
+        vllm_model=vllm_cfg.get("model"),
+        vllm_max_concurrency=int(vllm_cfg.get("max_concurrency", 8) or 8),
+        vllm_request_timeout_s=float(vllm_cfg.get("request_timeout_s", 120.0) or 120.0),
+        vllm_max_retries=int(vllm_cfg.get("max_retries", 3) or 3),
     )
     return cfg
 
@@ -97,6 +120,14 @@ def format_prompt(question: str, options: List[str]) -> str:
     system_prompt = "You will be given two images concatenated side by side: (1) a north-up overhead map with arrows labeled A, B, C, ... and (2) a street-view photo.\nRules:\n- The camera location is the same for all options: the center of the intersection.\n- Each letter corresponds to facing outward from that center along the arrow of that label.\n- The small circles near labels are markers only; they are not camera locations.\n- The map and photo may be captured years apart. Ignore transient objects (cars, people).\nThink step by step to compare the street-view with the map (buildings, angles, lanes, landmarks).\nOn the final line, output only: Final answer: \\boxed{X} where X is a single letter (A, B, C, ...)."
     prompt_lines = [system_prompt, question]
     return "\n".join(prompt_lines)
+
+
+def image_to_data_url(image: Image.Image) -> str:
+    buf = io.BytesIO()
+    # Use PNG to avoid JPEG artifacts and ensure broad compatibility
+    image.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
 
 
 def normalize_letter(text: str, num_options: int) -> str:
@@ -204,7 +235,7 @@ def normalize_letter(text: str, num_options: int) -> str:
     return ""
 
 
-def evaluate(cfg: EvalConfig) -> Dict[str, Any]:
+def evaluate_hf(cfg: EvalConfig) -> Dict[str, Any]:
     print("Configuration:")
     print(f"  Model: {cfg.model_name}")
     print(f"  Dataset: {cfg.dataset_name} ({cfg.dataset_split})")
@@ -214,7 +245,7 @@ def evaluate(cfg: EvalConfig) -> Dict[str, Any]:
     print(f"  Device: {device}")
 
     dtype = to_torch_dtype(cfg.dtype)
-    print("\n[1/4] Loading Qwen3-VL model...")
+    print("\n[1/4] Loading Qwen3-VL model (HF backend)...")
     model = AutoModelForImageTextToText.from_pretrained(
         cfg.model_name,
         dtype=dtype,
@@ -367,6 +398,198 @@ def evaluate(cfg: EvalConfig) -> Dict[str, Any]:
         torch.cuda.empty_cache()
 
     return summary
+
+
+async def _vllm_eval_one(
+    client,
+    semaphore: asyncio.Semaphore,
+    cfg: EvalConfig,
+    idx: int,
+    item: Dict[str, Any],
+    model_name: str,
+):
+    prompt = format_prompt(item["question"], item["options"])
+    image_contents: List[Dict[str, Any]] = []
+    for key in ("image_sv", "image_map"):
+        image = safe_load_image(item.get(key))
+        if image is not None:
+            data_url = image_to_data_url(image)
+            image_contents.append({
+                "type": "image_url",
+                "image_url": {"url": data_url},
+            })
+    if not image_contents:
+        raise ValueError("Sample missing both scene and map images.")
+    content: List[Dict[str, Any]] = []
+    content.extend(image_contents)
+    content.append({"type": "text", "text": prompt})
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": content,
+            }
+        ],
+        "temperature": cfg.generation_temperature,
+        "max_tokens": cfg.generation_max_new_tokens,
+    }
+
+    backoff = 1.0
+    for attempt in range(cfg.vllm_max_retries + 1):
+        try:
+            async with semaphore:
+                resp = await client.post(
+                    "/v1/chat/completions",
+                    json=payload,
+                    timeout=cfg.vllm_request_timeout_s,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            response_text = data["choices"][0]["message"]["content"]
+            prediction = normalize_letter(response_text, len(item["options"]))
+            ground_truth = item["answer"]
+            is_correct = prediction == ground_truth
+            record = {
+                "id": item.get("id", idx),
+                "question": item.get("question"),
+                "options": item.get("options"),
+                "ground_truth": ground_truth,
+                "prediction": prediction,
+                "raw_response": response_text,
+                "correct": is_correct,
+            }
+            return record
+        except Exception as exc:
+            if attempt >= cfg.vllm_max_retries:
+                return {
+                    "id": item.get("id", idx),
+                    "question": item.get("question"),
+                    "options": item.get("options"),
+                    "ground_truth": item.get("answer"),
+                    "prediction": "ERROR",
+                    "raw_response": str(exc),
+                    "correct": False,
+                }
+            time.sleep(backoff)
+            backoff = min(backoff * 2.0, 8.0)
+
+
+def evaluate_vllm(cfg: EvalConfig) -> Dict[str, Any]:
+    print("Configuration:")
+    print(f"  Model: {cfg.model_name}")
+    print(f"  Dataset: {cfg.dataset_name} ({cfg.dataset_split})")
+    print(f"  Output dir: {cfg.output_dir}")
+    print("\n[1/3] Using vLLM OpenAI-compatible endpoint...")
+
+    api_base = cfg.vllm_api_base or os.environ.get("VLLM_API_BASE")
+    if not api_base:
+        raise ValueError("vLLM backend selected but no api_base provided (in config.inference.vllm.api_base or VLLM_API_BASE env)")
+    api_key = cfg.vllm_api_key or os.environ.get("VLLM_API_KEY", "EMPTY")
+    model_name = cfg.vllm_model or cfg.model_name
+
+    print("\n[2/3] Loading dataset...")
+    dataset: Dataset = load_dataset(cfg.dataset_name, split=cfg.dataset_split)
+    if cfg.limit is not None:
+        dataset = dataset.select(range(min(cfg.limit, len(dataset))))
+    total = len(dataset)
+    print(f"  Samples: {total}")
+
+    results: List[Dict[str, Any]] = []
+
+    async def runner():
+        import httpx  # local import to avoid dependency if vLLM isn't used
+
+        headers = {"Authorization": f"Bearer {api_key}"}
+        limits = httpx.Limits(max_connections=cfg.vllm_max_concurrency, max_keepalive_connections=cfg.vllm_max_concurrency)
+        async with httpx.AsyncClient(base_url=api_base, headers=headers, limits=limits) as client:
+            semaphore = asyncio.Semaphore(cfg.vllm_max_concurrency)
+            tasks = [
+                _vllm_eval_one(client, semaphore, cfg, idx, item, model_name)
+                for idx, item in enumerate(dataset)
+            ]
+            for coro in asyncio.as_completed(tasks):
+                rec = await coro
+                results.append(rec)
+
+    asyncio.run(runner())
+
+    # compute metrics
+    correct = sum(1 for r in results if r.get("correct"))
+    accuracy = correct / total if total else 0.0
+    summary = {
+        "model": cfg.model_name,
+        "dataset": cfg.dataset_name,
+        "split": cfg.dataset_split,
+        "total_samples": total,
+        "correct": correct,
+        "incorrect": total - correct,
+        "accuracy": float(accuracy),
+        "timestamp": datetime.utcnow().isoformat(),
+        "config": {
+            "backend": cfg.backend,
+            "vllm_api_base": api_base,
+            "vllm_model": model_name,
+            "max_new_tokens": cfg.generation_max_new_tokens,
+            "temperature": cfg.generation_temperature,
+            "limit": cfg.limit,
+        },
+    }
+
+    print("\n" + "=" * 80)
+    print("EVALUATION COMPLETE")
+    print("=" * 80)
+    for key, value in summary.items():
+        if key != "config":
+            print(f"{key.title().replace('_', ' ')}: {value}")
+    print("=" * 80)
+
+    if cfg.save_predictions:
+        os.makedirs(cfg.output_dir, exist_ok=True)
+        results_path = os.path.join(cfg.output_dir, "predictions.csv")
+        summary_path = os.path.join(cfg.output_dir, "summary.json")
+        pd.DataFrame(results).to_csv(results_path, index=False)
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        print(f"\nSaved predictions to: {results_path}")
+        print(f"Saved summary to: {summary_path}")
+
+    return summary
+
+
+def evaluate(cfg: EvalConfig) -> Dict[str, Any]:
+    # Environment overrides (prefer env if set)
+    backend_env = (os.environ.get("KOA_EVAL_BACKEND") or os.environ.get("KOA_EVALUATOR_BACKEND") or "").strip().lower()
+    if backend_env:
+        cfg.backend = backend_env
+    if os.environ.get("VLLM_API_BASE"):
+        cfg.vllm_api_base = os.environ.get("VLLM_API_BASE")
+        if cfg.backend != "vllm":
+            cfg.backend = "vllm"
+    if os.environ.get("VLLM_API_KEY"):
+        cfg.vllm_api_key = os.environ.get("VLLM_API_KEY")
+    if os.environ.get("VLLM_MODEL"):
+        cfg.vllm_model = os.environ.get("VLLM_MODEL")
+    if os.environ.get("VLLM_MAX_CONCURRENCY"):
+        try:
+            cfg.vllm_max_concurrency = int(os.environ.get("VLLM_MAX_CONCURRENCY"))
+        except Exception:
+            pass
+    if os.environ.get("VLLM_REQUEST_TIMEOUT_S"):
+        try:
+            cfg.vllm_request_timeout_s = float(os.environ.get("VLLM_REQUEST_TIMEOUT_S"))
+        except Exception:
+            pass
+    if os.environ.get("VLLM_MAX_RETRIES"):
+        try:
+            cfg.vllm_max_retries = int(os.environ.get("VLLM_MAX_RETRIES"))
+        except Exception:
+            pass
+
+    if cfg.backend == "vllm":
+        return evaluate_vllm(cfg)
+    return evaluate_hf(cfg)
 
 
 def parse_args() -> argparse.Namespace:
