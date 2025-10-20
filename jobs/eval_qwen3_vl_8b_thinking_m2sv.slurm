@@ -70,7 +70,7 @@ VLLM_PID=$!
 
 echo "Waiting for vLLM to load model ${MODEL} on port ${PORT}..."
 RETRIES=100
-until curl -fsS "http://127.0.0.1:${PORT}/v1/models" | grep -q "\"id\": \"${MODEL}\""; do
+until curl -fsS "http://127.0.0.1:${PORT}/v1/models" | grep -Eq "\"id\"[[:space:]]*:[[:space:]]*\"${MODEL}\""; do
   sleep 10
   RETRIES=$((RETRIES-1))
   if [ ${RETRIES} -le 0 ]; then

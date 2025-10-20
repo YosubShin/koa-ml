@@ -69,12 +69,13 @@ scripts/run_vllm_server.sh --model "${MODEL}" --port "${PORT}" --tp ${VLLM_TP:-1
 VLLM_PID=$!
 
 echo "Waiting for vLLM to load model ${MODEL} on port ${PORT}..."
-RETRIES=100
-until curl -fsS "http://127.0.0.1:${PORT}/v1/models" | grep -q "\"id\": \"${MODEL}\""; do
+RETRIES=50
+until curl -fsS "http://127.0.0.1:${PORT}/v1/models" | grep -Eq "\"id\"[[:space:]]*:[[:space:]]*\"${MODEL}\""; do
   sleep 10
   RETRIES=$((RETRIES-1))
   if [ ${RETRIES} -le 0 ]; then
     echo "vLLM did not load model ${MODEL} in time." >&2
+    curl -fsS "http://127.0.0.1:${PORT}/v1/models"
     kill ${VLLM_PID} || true
     exit 1
   fi
