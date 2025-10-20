@@ -15,7 +15,7 @@ generation:
   limit:
 
 output:
-  dir: "./eval_results/qwen3_vl_30b_a3b_instruct_m2sv_20251017_v2"
+  dir: "./eval_results/qwen3_vl_30b_a3b_instruct_m2sv_20251020_v1"
   save_predictions: true
 
 inference:
