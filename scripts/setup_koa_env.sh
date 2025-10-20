@@ -190,7 +190,7 @@ if [[ -n "${UV_BIN}" ]]; then
 else
   log "uv unavailable; falling back to python venv + pip for vLLM env"
   log "Creating vLLM virtual environment at ${VLLM_VENV_DIR}"
-  "${PYTHON_BIN}" -m venv "${VLLM_VENV_DIR}"
+  uv venv "${VLLM_VENV_DIR}" --python "${PYTHON_BIN}" --seed
   # shellcheck disable=SC1090
   source "${VLLM_VENV_DIR}/bin/activate"
   "${UV_BIN}" pip install vllm --torch-backend=auto

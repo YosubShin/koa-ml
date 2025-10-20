@@ -2,7 +2,7 @@
 #SBATCH --job-name=eval-qwen3-vl-30b-a3b-thinking-m2sv
 #SBATCH --partition=kill-shared
 #SBATCH --gres=gpu:nvidia_h200_nvl:1
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/eval-qwen3-vl-30b-a3b-thinking-m2sv-%j.out
