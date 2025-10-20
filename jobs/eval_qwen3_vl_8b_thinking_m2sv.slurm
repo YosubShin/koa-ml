@@ -60,20 +60,21 @@ python --version
 echo ""
 
 echo "==== Starting vLLM server (background) ===="
-PORT=${VLLM_PORT:-8000}
+# Choose a per-job port to avoid port collisions on shared nodes
+PORT=${VLLM_PORT:-$((8000 + SLURM_JOB_ID % 1000))}
 # Use dedicated vLLM venv if available
 export KOA_VLLM_VENV="${KOA_VLLM_VENV:-$HOME/koa-ml/.venv-vllm}"
 MODEL="Qwen/Qwen3-VL-8B-Thinking"
 scripts/run_vllm_server.sh --model "${MODEL}" --port "${PORT}" --tp ${VLLM_TP:-1} --gpu-mem-util ${VLLM_GPU_MEM_UTIL:-0.92} &
 VLLM_PID=$!
 
-echo "Waiting for vLLM to become ready on port ${PORT}..."
+echo "Waiting for vLLM to load model ${MODEL} on port ${PORT}..."
 RETRIES=300
-until curl -sSf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; do
+until curl -fsS "http://127.0.0.1:${PORT}/v1/models" | grep -q "\"id\": \"${MODEL}\""; do
   sleep 2
   RETRIES=$((RETRIES-1))
   if [ ${RETRIES} -le 0 ]; then
-    echo "vLLM did not become ready in time." >&2
+    echo "vLLM did not load model ${MODEL} in time." >&2
     kill ${VLLM_PID} || true
     exit 1
   fi
