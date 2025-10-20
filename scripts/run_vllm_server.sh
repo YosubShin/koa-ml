@@ -13,6 +13,15 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -n "${KOA_VLLM_VENV:-}" ]]; then
+  if [[ -d "${KOA_VLLM_VENV}" ]]; then
+    echo "[vllm-server] Activating KOA_VLLM_VENV: ${KOA_VLLM_VENV}"
+    # shellcheck disable=SC1090
+    source "${KOA_VLLM_VENV}/bin/activate"
+  else
+    echo "[vllm-server] KOA_VLLM_VENV is set but not a directory: ${KOA_VLLM_VENV}" >&2
+  fi
+fi
 PORT=8000
 TP=1
 GPU_MEM_UTIL=0.90

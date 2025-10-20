@@ -61,6 +61,8 @@ echo ""
 
 echo "==== Starting vLLM server (background) ===="
 PORT=${VLLM_PORT:-8000}
+# Use dedicated vLLM venv if available
+export KOA_VLLM_VENV="${KOA_VLLM_VENV:-$HOME/koa-ml/.venv-vllm}"
 MODEL="Qwen/Qwen3-VL-30B-A3B-Thinking"
 scripts/run_vllm_server.sh --model "${MODEL}" --port "${PORT}" --tp ${VLLM_TP:-1} --gpu-mem-util ${VLLM_GPU_MEM_UTIL:-0.92} &
 VLLM_PID=$!
