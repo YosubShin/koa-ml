@@ -117,7 +117,7 @@ def safe_load_image(image_obj: Any) -> Optional[Image.Image]:
 
 
 def format_prompt(question: str, options: List[str]) -> str:
-    system_prompt = "You will be given two images concatenated side by side: (1) a north-up overhead map with arrows labeled A, B, C, ... and (2) a street-view photo.\nRules:\n- The camera location is the same for all options: the center of the intersection.\n- Each letter corresponds to facing outward from that center along the arrow of that label.\n- The small circles near labels are markers only; they are not camera locations.\n- The map and photo may be captured years apart. Ignore transient objects (cars, people).\nThink step by step to compare the street-view with the map (buildings, angles, lanes, landmarks).\nOn the final line, output only: Final answer: \\boxed{X} where X is a single letter (A, B, C, ...)."
+    system_prompt = "You will be given two images concatenated side by side: (1) a north-up overhead map with arrows labeled A, B, C, ... and (2) a street-view photo.\nRules:\n- The camera location is the same for all options: the center of the intersection.\n- Each letter corresponds to facing outward from that center along the arrow of that label.\n- The small circles near labels are markers only; they are not camera locations.\n- The map and photo may be captured years apart. Ignore transient objects (cars, people).\nOn the final line, output only: Final answer: \\boxed{X} where X is a single letter (A, B, C, ...)."
     prompt_lines = [system_prompt, question]
     return "\n".join(prompt_lines)
 
