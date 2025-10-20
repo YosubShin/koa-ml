@@ -11,7 +11,7 @@ dataset:
 
 generation:
   max_new_tokens: 8192
-  temperature: 0.1
+  temperature: 0.2
   limit:
 
 output:
