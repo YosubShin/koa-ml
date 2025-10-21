@@ -59,38 +59,62 @@ which python
 python --version
 echo ""
 
-echo "==== Starting vLLM server (background) ===="
-# Choose a per-job port to avoid port collisions on shared nodes
-PORT=${VLLM_PORT:-$((8000 + SLURM_JOB_ID % 1000))}
-# Use dedicated vLLM venv if available
-export KOA_VLLM_VENV="${KOA_VLLM_VENV:-$HOME/koa-ml/.venv-vllm}"
+CONFIG_PATH="eval/configs/qwen3_vl_30b_a3b_instruct_m2sv.yaml"
+
+# Detect backend preference: env takes precedence, else read from YAML config
+BACKEND="${KOA_EVAL_BACKEND:-${KOA_EVALUATOR_BACKEND:-}}"
+if [ -z "${BACKEND}" ]; then
+  BACKEND=$(python - <<'PY'
+import sys, yaml
+with open("eval/configs/qwen3_vl_30b_a3b_instruct_m2sv.yaml", "r") as f:
+    raw = yaml.safe_load(f) or {}
+inference = (raw.get("inference") or {})
+backend = (inference.get("backend") or "").strip().lower()
+print(backend)
+PY
+  ) || BACKEND=""
+fi
+
+STARTED_VLLM=0
 MODEL="Qwen/Qwen3-VL-30B-A3B-Instruct"
-scripts/run_vllm_server.sh --model "${MODEL}" --port "${PORT}" --tp ${VLLM_TP:-1} --gpu-mem-util ${VLLM_GPU_MEM_UTIL:-0.92} &
-VLLM_PID=$!
 
-echo "Waiting for vLLM to load model ${MODEL} on port ${PORT}..."
-RETRIES=300
-until curl -fsS "http://127.0.0.1:${PORT}/v1/models" | grep -Eq "\"id\"[[:space:]]*:[[:space:]]*\"${MODEL}\""; do
-  sleep 2
-  RETRIES=$((RETRIES-1))
-  if [ ${RETRIES} -le 0 ]; then
-    echo "vLLM did not load model ${MODEL} in time." >&2
-    kill ${VLLM_PID} || true
-    exit 1
+if [ "${BACKEND}" = "vllm" ]; then
+  if [ -z "${VLLM_API_BASE:-}" ]; then
+    echo "==== Starting vLLM server (background) ===="
+    PORT=${VLLM_PORT:-$((8000 + SLURM_JOB_ID % 1000))}
+    export KOA_VLLM_VENV="${KOA_VLLM_VENV:-$HOME/koa-ml/.venv-vllm}"
+    scripts/run_vllm_server.sh --model "${MODEL}" --port "${PORT}" --tp ${VLLM_TP:-1} --gpu-mem-util ${VLLM_GPU_MEM_UTIL:-0.92} &
+    VLLM_PID=$!
+    STARTED_VLLM=1
+
+    echo "Waiting for vLLM to load model ${MODEL} on port ${PORT}..."
+    RETRIES=300
+    until curl -fsS "http://127.0.0.1:${PORT}/v1/models" | grep -Eq "\"id\"[[:space:]]*:[[:space:]]*\"${MODEL}\""; do
+      sleep 2
+      RETRIES=$((RETRIES-1))
+      if [ ${RETRIES} -le 0 ]; then
+        echo "vLLM did not load model ${MODEL} in time." >&2
+        kill ${VLLM_PID} || true
+        exit 1
+      fi
+    done
+    export VLLM_API_BASE="http://127.0.0.1:${PORT}"
   fi
-done
+  export KOA_EVAL_BACKEND=vllm
+  export VLLM_MODEL="${MODEL}"
+else
+  echo "Skipping vLLM startup; backend='${BACKEND:-hf}'"
+fi
 
-export KOA_EVAL_BACKEND=vllm
-export VLLM_API_BASE="http://127.0.0.1:${PORT}"
-export VLLM_MODEL="${MODEL}"
-
-echo "==== Starting Evaluation (vLLM) ===="
+echo "==== Starting Evaluation ===="
 python eval/qwen3_vl_eval.py \
-  --config eval/configs/qwen3_vl_30b_a3b_instruct_m2sv.yaml || STATUS=$?
+  --config "${CONFIG_PATH}" || STATUS=$?
 
-echo "Stopping vLLM server (PID ${VLLM_PID})..."
-kill ${VLLM_PID} || true
-wait ${VLLM_PID} || true
+if [ ${STARTED_VLLM} -eq 1 ]; then
+  echo "Stopping vLLM server (PID ${VLLM_PID})..."
+  kill ${VLLM_PID} || true
+  wait ${VLLM_PID} || true
+fi
 exit ${STATUS:-0}
 
 echo ""
