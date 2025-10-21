@@ -46,6 +46,7 @@ class EvalConfig:
     dataset_split: str = "train"
     generation_max_new_tokens: int = 128
     generation_temperature: float = 0.1
+    hf_batch_size: int = 1
     limit: Optional[int] = None
     output_dir: str = "./eval_results/qwen3_vl_m2sv"
     save_predictions: bool = True
@@ -71,6 +72,7 @@ def load_config(path: str) -> EvalConfig:
 
     inference_cfg = raw.get("inference", {}) or {}
     vllm_cfg = inference_cfg.get("vllm", {}) or {}
+    hf_cfg = inference_cfg.get("hf", {}) or {}
 
     cfg = EvalConfig(
         model_name=model_cfg["model_name"],
@@ -80,6 +82,7 @@ def load_config(path: str) -> EvalConfig:
         dataset_split=dataset_cfg.get("split", "train"),
         generation_max_new_tokens=generation_cfg.get("max_new_tokens", 128),
         generation_temperature=generation_cfg.get("temperature", 0.1),
+        hf_batch_size=int((hf_cfg.get("batch_size") if hf_cfg.get("batch_size") is not None else generation_cfg.get("batch_size", 1)) or 1),
         limit=generation_cfg.get("limit"),
         output_dir=output_cfg.get("dir", "./eval_results/qwen3_vl_m2sv"),
         save_predictions=output_cfg.get("save_predictions", True),
@@ -240,6 +243,7 @@ def evaluate_hf(cfg: EvalConfig) -> Dict[str, Any]:
     print(f"  Model: {cfg.model_name}")
     print(f"  Dataset: {cfg.dataset_name} ({cfg.dataset_split})")
     print(f"  Output dir: {cfg.output_dir}")
+    print(f"  HF batch size: {max(1, int(getattr(cfg, 'hf_batch_size', 1) or 1))}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"  Device: {device}")
@@ -252,6 +256,17 @@ def evaluate_hf(cfg: EvalConfig) -> Dict[str, Any]:
         device_map=cfg.device_map,
     )
     processor = AutoProcessor.from_pretrained(cfg.model_name)
+
+    # Ensure left padding for decoder-only generation and a valid pad token
+    try:
+        if hasattr(processor, "tokenizer") and processor.tokenizer is not None:
+            processor.tokenizer.padding_side = "left"
+            if getattr(processor.tokenizer, "pad_token", None) is None and getattr(processor.tokenizer, "eos_token", None) is not None:
+                processor.tokenizer.pad_token = processor.tokenizer.eos_token
+        if getattr(model, "generation_config", None) is not None and getattr(model.generation_config, "pad_token_id", None) is None and hasattr(processor, "tokenizer") and processor.tokenizer is not None:
+            model.generation_config.pad_token_id = processor.tokenizer.pad_token_id
+    except Exception:
+        pass
 
     params_b = sum(p.numel() for p in model.parameters()) / 1e9
     print(f"  Parameters: {params_b:.2f}B")
@@ -266,30 +281,64 @@ def evaluate_hf(cfg: EvalConfig) -> Dict[str, Any]:
     results: List[Dict[str, Any]] = []
     correct = 0
 
-    pbar = tqdm(dataset, desc="Evaluating", total=total)
+    batch_size = max(1, int(getattr(cfg, "hf_batch_size", 1) or 1))
+    processed = 0
+    pbar = tqdm(total=total, desc="Evaluating")
 
-    for idx, item in enumerate(pbar):
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        batch_items = [dataset[i] for i in range(start, end)]
+
+        # Build batched chat messages, skipping invalid samples (record as errors)
+        batch_messages: List[List[Dict[str, Any]]] = []
+        batch_meta: List[Dict[str, Any]] = []  # holds per-sample metadata
+
+        for local_idx, item in enumerate(batch_items):
+            global_idx = start + local_idx
+            try:
+                prompt = format_prompt(item["question"], item["options"])
+                image_content: List[Dict[str, Any]] = []
+                for key in ("image_sv", "image_map"):
+                    image = safe_load_image(item.get(key))
+                    if image is not None:
+                        image_content.append({"type": "image", "image": image})
+                if not image_content:
+                    raise ValueError("Sample missing both scene and map images.")
+                image_content.append({"type": "text", "text": prompt})
+                messages = [{"role": "user", "content": image_content}]
+                batch_messages.append(messages)
+                batch_meta.append({
+                    "id": item.get("id", global_idx),
+                    "question": item.get("question"),
+                    "options": item.get("options"),
+                    "answer": item.get("answer"),
+                    "num_options": len(item.get("options", [])),
+                })
+            except Exception as exc:
+                print(f"\nError preparing sample {global_idx}: {exc}")
+                results.append({
+                    "id": item.get("id", global_idx),
+                    "question": item.get("question"),
+                    "options": item.get("options"),
+                    "ground_truth": item.get("answer"),
+                    "prediction": "ERROR",
+                    "raw_response": str(exc),
+                    "correct": False,
+                })
+                processed += 1
+                pbar.update(1)
+
+        if not batch_messages:
+            continue
+
         try:
-            prompt = format_prompt(item["question"], item["options"])
-            image_content: List[Dict[str, Any]] = []
-
-            for key in ("image_sv", "image_map"):
-                image = safe_load_image(item.get(key))
-                if image is not None:
-                    image_content.append({"type": "image", "image": image})
-
-            if not image_content:
-                raise ValueError("Sample missing both scene and map images.")
-
-            image_content.append({"type": "text", "text": prompt})
-            messages = [{"role": "user", "content": image_content}]
-
             inputs = processor.apply_chat_template(
-                messages,
+                batch_messages,
                 tokenize=True,
                 add_generation_prompt=True,
                 return_dict=True,
                 return_tensors="pt",
+                padding=True,
             ).to(device)
 
             with torch.no_grad():
@@ -299,56 +348,59 @@ def evaluate_hf(cfg: EvalConfig) -> Dict[str, Any]:
                     temperature=cfg.generation_temperature,
                 )
 
+            # Trim prompt tokens per sample
             generated_ids_trimmed = [
-                out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], outputs)
+                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], outputs)
             ]
 
-            response = processor.batch_decode(
+            responses = processor.batch_decode(
                 generated_ids_trimmed,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
-            )[0]
-
-            prediction = normalize_letter(response, len(item["options"]))
-            ground_truth = item["answer"]
-            is_correct = prediction == ground_truth
-
-            if is_correct:
-                correct += 1
-
-            results.append(
-                {
-                    "id": item.get("id", idx),
-                    "question": item["question"],
-                    "options": item["options"],
-                    "ground_truth": ground_truth,
-                    "prediction": prediction,
-                    "raw_response": response,
-                    "correct": is_correct,
-                }
             )
 
-            accuracy = correct / (idx + 1)
+            for meta, resp in zip(batch_meta, responses):
+                prediction = normalize_letter(resp, meta["num_options"])
+                ground_truth = meta["answer"]
+                is_correct = prediction == ground_truth
+                if is_correct:
+                    correct += 1
+                results.append({
+                    "id": meta["id"],
+                    "question": meta["question"],
+                    "options": meta["options"],
+                    "ground_truth": ground_truth,
+                    "prediction": prediction,
+                    "raw_response": resp,
+                    "correct": is_correct,
+                })
+
+            processed += len(batch_meta)
+            pbar.update(len(batch_meta))
+            accuracy = correct / max(1, processed)
             pbar.set_postfix({"accuracy": f"{accuracy:.2%}"})
 
-            if (idx + 1) % 10 == 0:
+            if processed % 10 == 0:
                 gc.collect()
                 if device == "cuda":
                     torch.cuda.empty_cache()
 
         except Exception as exc:
-            print(f"\nError on sample {idx}: {exc}")
-            results.append(
-                {
-                    "id": item.get("id", idx),
+            # If the whole batch fails, record each as error
+            print(f"\nBatch error for samples {start}-{end-1}: {exc}")
+            for local_idx, item in enumerate(batch_items):
+                global_idx = start + local_idx
+                results.append({
+                    "id": item.get("id", global_idx),
                     "question": item.get("question"),
                     "options": item.get("options"),
                     "ground_truth": item.get("answer"),
                     "prediction": "ERROR",
                     "raw_response": str(exc),
                     "correct": False,
-                }
-            )
+                })
+            processed += len(batch_items)
+            pbar.update(len(batch_items))
 
     pbar.close()
 
@@ -584,6 +636,11 @@ def evaluate(cfg: EvalConfig) -> Dict[str, Any]:
     if os.environ.get("VLLM_MAX_RETRIES"):
         try:
             cfg.vllm_max_retries = int(os.environ.get("VLLM_MAX_RETRIES"))
+        except Exception:
+            pass
+    if os.environ.get("KOA_EVAL_BATCH_SIZE"):
+        try:
+            cfg.hf_batch_size = int(os.environ.get("KOA_EVAL_BATCH_SIZE"))
         except Exception:
             pass
 
